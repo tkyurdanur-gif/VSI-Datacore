@@ -79,7 +79,7 @@
   <script type="text/babel" data-type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js';
     import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js';
-    import { getFirestore, collection, doc, setDoc, onSnapshot, addDoc, deleteDoc, updateDoc } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
+    import { getFirestore, collection, doc, setDoc, onSnapshot, addDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
 
     const { useState, useEffect, useRef, useCallback } = React;
 
@@ -190,7 +190,7 @@
       const [searchQuery, setSearchQuery] = useState('');
       
       // Terminal
-      const [terminalHistory, setTerminalHistory] = useState(["VSI OS v5.0.0 (P.I.R Active).", "Type 'HELP' for commands."]);
+      const [terminalHistory, setTerminalHistory] = useState(["VSI OS v5.0.1 (P.I.R Active).", "Type 'HELP' for commands."]);
       const [terminalInput, setTerminalInput] = useState('');
       const terminalEndRef = useRef(null);
       
@@ -212,7 +212,8 @@
         else if (newSuspicion >= 30) newStatus = 'Flagged';
 
         try {
-          await updateDoc(getDocRef('vsi_users', user.uid), { suspicion: newSuspicion, status: newStatus });
+          // FIX: Changed updateDoc to setDoc with merge to avoid missing document errors
+          await setDoc(getDocRef('vsi_users', user.uid), { suspicion: newSuspicion, status: newStatus }, { merge: true });
           addLog(`A.B.A Flag: +${amount} Suspicion (${reason})`);
         } catch (e) { console.error("Error updating P.I.R", e); }
       };
@@ -244,7 +245,7 @@
       useEffect(() => {
         if (!user) {
           if (!authLoading) {
-             // Fallback profile if auth fails (e.g. API keys invalid on GitHub)
+             // Fallback profile if auth fails (e.g. API keys invalid on GitHub, or Anonymous Sign-in disabled)
              setUserProfile({ vsiId: `VSI-OFFLINE`, role: 'Offline Guest', suspicion: 0, status: 'Active' });
           }
           return;
@@ -420,7 +421,7 @@
           });
           form.reset();
           addLog("Injected new archive asset.");
-        } catch (err) {}
+        } catch (err) { console.error(err); }
       };
 
       const handleDelete = async (colName, docId) => {
@@ -452,11 +453,14 @@
       // Z.E.R.O Protocol Render with Developer Backdoor
       if (userProfile.status === 'ERASED') return (
         <div className="h-screen w-screen bg-black flex flex-col items-center justify-center text-red-600 font-mono select-none">
-           <div onClick={() => {
+           <div onClick={async () => {
                const newClicks = escapeClicks + 1;
                setEscapeClicks(newClicks);
                if (newClicks >= 5) {
-                 updateDoc(getDocRef('vsi_users', user.uid), { suspicion: 0, status: 'Active' });
+                 if (user) {
+                    try { await setDoc(getDocRef('vsi_users', user.uid), { suspicion: 0, status: 'Active' }, { merge: true }); } catch(e) {}
+                 }
+                 setUserProfile(prev => ({...prev, suspicion: 0, status: 'Active'}));
                  setEscapeClicks(0);
                }
            }} className="cursor-pointer hover:opacity-100 opacity-50 transition-opacity mb-8 relative">
@@ -630,11 +634,13 @@
                         {/* MASTER PASSWORD */}
                         <div className="border border-zinc-800 p-4 bg-black/40">
                           <h3 className="text-yellow-500 font-bold mb-2 flex items-center gap-2"><KeyRound size={16}/> MASTER CLEARANCE CODE</h3>
-                          <form onSubmit={(e) => {
+                          <form onSubmit={async (e) => {
                               e.preventDefault();
-                              updateDoc(getConfigRef(), { classifiedPassword: e.target.pwd.value });
-                              addLog("MASTER PASSWORD UPDATED");
-                              e.target.reset();
+                              try {
+                                await setDoc(getConfigRef(), { classifiedPassword: e.target.pwd.value }, { merge: true });
+                                addLog("MASTER PASSWORD UPDATED");
+                                e.target.reset();
+                              } catch(err) { console.error(err); }
                           }} className="flex gap-2">
                             <input name="pwd" placeholder="Enter new Master Password..." required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300 outline-none focus:border-yellow-500" />
                             <button type="submit" className="bg-yellow-900/30 text-yellow-500 border border-yellow-700 px-4 hover:bg-yellow-800/50 font-bold">UPDATE</button>
@@ -644,12 +650,14 @@
                         {/* BACKGROUND INJECTOR */}
                         <div className="border border-zinc-800 p-4 bg-black/40">
                           <h3 className="text-cyan-500 font-bold mb-2 flex items-center gap-2"><Eye size={16}/> BACKGROUND INJECTOR</h3>
-                          <form onSubmit={(e) => {
+                          <form onSubmit={async (e) => {
                               e.preventDefault();
-                              const newBg = e.target.bgUrl.value;
-                              updateDoc(getConfigRef(), { backgroundUrl: newBg });
-                              addLog("GLOBAL BACKGROUND OVERRIDDEN");
-                              e.target.reset();
+                              try {
+                                const newBg = e.target.bgUrl.value;
+                                await setDoc(getConfigRef(), { backgroundUrl: newBg }, { merge: true });
+                                addLog("GLOBAL BACKGROUND OVERRIDDEN");
+                                e.target.reset();
+                              } catch(err) { console.error(err); }
                           }} className="flex gap-2">
                             <input name="bgUrl" placeholder="Enter direct image URL (e.g. https://...)" required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300 outline-none focus:border-cyan-500" />
                             <button type="submit" className="bg-cyan-900/30 text-cyan-500 border border-cyan-700 px-4 hover:bg-cyan-800/50 font-bold">INJECT</button>
@@ -666,10 +674,12 @@
                               <div className="font-bold text-zinc-300">S.I.L.E.N.C.E PROTOCOL</div>
                               <div className="text-xs text-zinc-500">Enforces global read-only mode. All write/delete requests denied.</div>
                             </div>
-                            <button onClick={() => {
-                               const next = !systemConfig.globalSilence;
-                               updateDoc(getConfigRef(), { globalSilence: next });
-                               addLog(`GLOBAL SILENCE ${next ? 'ACTIVATED' : 'DEACTIVATED'}`);
+                            <button onClick={async () => {
+                               try {
+                                 const next = !systemConfig.globalSilence;
+                                 await setDoc(getConfigRef(), { globalSilence: next }, { merge: true });
+                                 addLog(`GLOBAL SILENCE ${next ? 'ACTIVATED' : 'DEACTIVATED'}`);
+                               } catch(err) {}
                             }} className={`px-6 py-2 font-bold transition-colors ${systemConfig.globalSilence ? 'bg-red-900 text-red-300 border border-red-500' : 'bg-zinc-800 text-zinc-500 border border-zinc-700'}`}>
                                {systemConfig.globalSilence ? 'ACTIVE' : 'INACTIVE'}
                             </button>
@@ -680,10 +690,12 @@
                               <div className="font-bold text-zinc-300">O.M.E.G.A WATCH</div>
                               <div className="text-xs text-zinc-500">Global high-alert state. Injects Mirage data for all users regardless of ID status.</div>
                             </div>
-                            <button onClick={() => {
-                               const next = !systemConfig.omegaWatch;
-                               updateDoc(getConfigRef(), { omegaWatch: next });
-                               addLog(`OMEGA WATCH ${next ? 'ACTIVATED' : 'DEACTIVATED'}`);
+                            <button onClick={async () => {
+                               try {
+                                 const next = !systemConfig.omegaWatch;
+                                 await setDoc(getConfigRef(), { omegaWatch: next }, { merge: true });
+                                 addLog(`OMEGA WATCH ${next ? 'ACTIVATED' : 'DEACTIVATED'}`);
+                               } catch(err) {}
                             }} className={`px-6 py-2 font-bold transition-colors ${systemConfig.omegaWatch ? 'bg-orange-900 text-orange-300 border border-orange-500' : 'bg-zinc-800 text-zinc-500 border border-zinc-700'}`}>
                                {systemConfig.omegaWatch ? 'ACTIVE' : 'INACTIVE'}
                             </button>
@@ -696,10 +708,12 @@
                           <div className="flex flex-wrap gap-4">
                             <button onClick={() => triggerLockdown("MANUAL ADMIN OVERRIDE")} className="bg-red-900/30 text-red-500 border border-red-700 px-4 py-2 hover:bg-red-900/50 font-bold text-xs">TRIGGER LOCKDOWN</button>
                             <button onClick={() => { setIntegrity(100); addLog("MANUAL INTEGRITY REPAIR INITIATED"); }} className="bg-cyan-900/30 text-cyan-500 border border-cyan-700 px-4 py-2 hover:bg-cyan-900/50 font-bold text-xs">REPAIR SYSTEM INTEGRITY</button>
-                            <button onClick={() => {
+                            <button onClick={async () => {
                                if (user) {
-                                 updateDoc(getDocRef('vsi_users', user.uid), { suspicion: 0, status: 'Active' });
-                                 addLog("ADMIN CLEARED PERSONAL A.B.A SUSPICION");
+                                 try {
+                                   await setDoc(getDocRef('vsi_users', user.uid), { suspicion: 0, status: 'Active' }, { merge: true });
+                                   addLog("ADMIN CLEARED PERSONAL A.B.A SUSPICION");
+                                 } catch(e) {}
                                }
                             }} className="bg-zinc-800 text-zinc-300 border border-zinc-600 px-4 py-2 hover:bg-zinc-700 font-bold text-xs">RESET OWN SUSPICION</button>
                           </div>
@@ -794,7 +808,7 @@
                       ))}
                     </div>
                     {clearanceLevel >= 5 && (
-                      <form onSubmit={(e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; addDoc(getColRef('vsi_personnel'), { codename: t.c.value, rank: t.r.value, status: t.s.value, level: parseInt(t.l.value), notes: t.n.value }); t.reset(); }} className="mt-4 p-4 border border-zinc-800 bg-black/50 shrink-0">
+                      <form onSubmit={async (e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; try { await addDoc(getColRef('vsi_personnel'), { codename: t.c.value, rank: t.r.value, status: t.s.value, level: parseInt(t.l.value), notes: t.n.value, createdAt: Date.now() }); t.reset(); } catch(err){} }} className="mt-4 p-4 border border-zinc-800 bg-black/50 shrink-0">
                          <div className="flex gap-2 text-sm"><input name="c" placeholder="Codename" required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="r" placeholder="Rank" className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><select name="s" className="bg-zinc-900 border border-zinc-800 p-2 text-zinc-300"><option>Active</option><option>MIA</option><option>Terminated</option></select><input type="number" name="l" placeholder="Lvl" defaultValue="3" className="w-16 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="n" placeholder="Notes" className="flex-2 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><button type="submit" className="bg-yellow-900/30 text-yellow-500 border border-yellow-700 px-3"><Plus size={16}/></button></div>
                       </form>
                     )}
@@ -816,7 +830,7 @@
                       ))}
                     </div>
                     {clearanceLevel >= 5 && (
-                      <form onSubmit={(e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; addDoc(getColRef('vsi_factions'), { id: t.i.value, name: t.n.value, relation: t.r.value, class: t.c.value, threat: "Unknown", description: t.d.value }); t.reset(); }} className="mt-4 p-4 border border-zinc-800 bg-black/50 shrink-0">
+                      <form onSubmit={async (e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; try { await addDoc(getColRef('vsi_factions'), { id: t.i.value, name: t.n.value, relation: t.r.value, class: t.c.value, threat: "Unknown", description: t.d.value, createdAt: Date.now() }); t.reset(); } catch(err){} }} className="mt-4 p-4 border border-zinc-800 bg-black/50 shrink-0">
                          <div className="flex gap-2 text-sm"><input name="i" placeholder="ID (VSI-001)" required className="w-24 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="n" placeholder="Faction Name" required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><select name="r" className="bg-zinc-900 border border-zinc-800 p-2 text-zinc-300"><option>Neutral</option><option>Hostile</option><option>Allied</option></select><select name="c" className="bg-zinc-900 border border-zinc-800 p-2 text-zinc-300"><option>Safe</option><option>Euclid</option><option>Keter</option></select><input name="d" placeholder="Description" className="flex-2 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><button type="submit" className="bg-yellow-900/30 text-yellow-500 border border-yellow-700 px-3"><Plus size={16}/></button></div>
                       </form>
                     )}
@@ -849,7 +863,7 @@
                       </div>
                     </div>
                     {clearanceLevel >= 5 && (
-                      <form onSubmit={(e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; addDoc(getColRef('vsi_incidents'), { date: t.d.value, id: t.i.value, log: t.l.value, clearance: parseInt(t.c.value), class: t.cl.value }); t.reset(); }} className="mt-8 p-4 border border-zinc-800 bg-black/50 shrink-0">
+                      <form onSubmit={async (e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; try { await addDoc(getColRef('vsi_incidents'), { date: t.d.value, id: t.i.value, log: t.l.value, clearance: parseInt(t.c.value), class: t.cl.value, createdAt: Date.now() }); t.reset(); } catch(err){} }} className="mt-8 p-4 border border-zinc-800 bg-black/50 shrink-0">
                          <div className="flex gap-2 text-sm"><input name="d" placeholder="Date (YYYY-MM-DD)" required className="w-32 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="i" placeholder="ID (INC-001)" required className="w-24 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><select name="cl" className="bg-zinc-900 border border-zinc-800 p-2 text-zinc-300"><option>Safe</option><option>Euclid</option><option>Keter</option></select><input type="number" name="c" placeholder="Lvl" defaultValue="3" className="w-16 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="l" placeholder="Incident Log..." className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><button type="submit" className="bg-yellow-900/30 text-yellow-500 border border-yellow-700 px-3"><Plus size={16}/></button></div>
                       </form>
                     )}
@@ -881,7 +895,7 @@
                       ))}
                     </div>
                     {clearanceLevel >= 5 && (
-                      <form onSubmit={(e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; addDoc(getColRef('vsi_experiments'), { id: t.i.value, protocol: t.p.value, procedure: t.pr.value, result: t.r.value, notes: t.n.value, clearance: parseInt(t.c.value) }); t.reset(); }} className="mt-8 p-4 border border-zinc-800 bg-black/50 shrink-0 relative z-20">
+                      <form onSubmit={async (e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; try { await addDoc(getColRef('vsi_experiments'), { id: t.i.value, protocol: t.p.value, procedure: t.pr.value, result: t.r.value, notes: t.n.value, clearance: parseInt(t.c.value), createdAt: Date.now() }); t.reset(); } catch(err){} }} className="mt-8 p-4 border border-zinc-800 bg-black/50 shrink-0 relative z-20">
                          <div className="flex gap-2 text-sm flex-wrap"><input name="i" placeholder="ID (EXP-01)" required className="w-24 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="p" placeholder="Protocol Name" required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input type="number" name="c" placeholder="Lvl" defaultValue="4" className="w-16 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /></div>
                          <div className="flex gap-2 text-sm mt-2"><input name="pr" placeholder="Procedure..." required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="r" placeholder="Result..." required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="n" placeholder="Notes..." required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><button type="submit" className="bg-yellow-900/30 text-yellow-500 border border-yellow-700 px-3"><Plus size={16}/></button></div>
                       </form>
