@@ -173,6 +173,7 @@
       const [lockdownState, setLockdownState] = useState(false);
       const [sessionExpired, setSessionExpired] = useState(false);
       const [argUnlocked, setArgUnlocked] = useState(false);
+      const [failedAttempts, setFailedAttempts] = useState(0); // FIXED: Added missing state declaration
       
       // Logs & AI
       const [accessLogs, setAccessLogs] = useState([{ time: new Date().toLocaleTimeString(), action: "SYSTEM BOOT", user: "GUEST" }]);
