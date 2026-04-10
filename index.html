@@ -457,9 +457,9 @@
       return (
         <div className={`h-screen w-screen flex flex-col overflow-hidden text-zinc-300 bg-black font-mono select-none ${lockdownState ? 'lockdown-mode' : isOmega}`}>
           
-          <div className="absolute inset-0 z-0 bg-cover bg-center bg-no-repeat opacity-40" style={{ backgroundImage: 'url("VSI_Design_Gallery_1.png")' }} />
-          <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/80 via-black/70 to-black/95" />
-          <div className={`absolute inset-0 z-0 pointer-events-none animate-scan ${lockdownState ? 'bg-red-900/20' : userProfile.status==='Flagged'?'bg-orange-900/10':'bg-black/30'}`} />
+          <div className="fixed inset-0 z-0 bg-cover bg-center bg-no-repeat" style={{ backgroundImage: 'url("VSI_Design_Gallery_1.png")' }} />
+          <div className="fixed inset-0 z-0 bg-black/60" />
+          <div className={`fixed inset-0 z-0 pointer-events-none animate-scan ${lockdownState ? 'bg-red-900/30' : userProfile.status==='Flagged'?'bg-orange-900/20':'bg-black/20'}`} />
 
           {/* OVERLAYS */}
           {unauthorizedPopup && (
