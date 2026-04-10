@@ -175,6 +175,7 @@
       const [sessionExpired, setSessionExpired] = useState(false);
       const [argUnlocked, setArgUnlocked] = useState(false);
       const [failedAttempts, setFailedAttempts] = useState(0);
+      const [escapeClicks, setEscapeClicks] = useState(0); // For ZERO Protocol backdoor
       
       // Logs & AI
       const [accessLogs, setAccessLogs] = useState([{ time: new Date().toLocaleTimeString(), action: "SYSTEM BOOT", user: "GUEST" }]);
@@ -448,9 +449,20 @@
         </div>
       );
 
+      // Z.E.R.O Protocol Render with Developer Backdoor
       if (userProfile.status === 'ERASED') return (
         <div className="h-screen w-screen bg-black flex flex-col items-center justify-center text-red-600 font-mono select-none">
-           <Fingerprint size={100} className="mb-8 opacity-50" />
+           <div onClick={() => {
+               const newClicks = escapeClicks + 1;
+               setEscapeClicks(newClicks);
+               if (newClicks >= 5) {
+                 updateDoc(getDocRef('vsi_users', user.uid), { suspicion: 0, status: 'Active' });
+                 setEscapeClicks(0);
+               }
+           }} className="cursor-pointer hover:opacity-100 opacity-50 transition-opacity mb-8 relative">
+             <Fingerprint size={100} />
+             {escapeClicks > 0 && <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 text-[10px] text-red-900">OVR: {escapeClicks}/5</div>}
+           </div>
            <h1 className="text-6xl font-black tracking-[0.5em] mb-4 text-red-600 drop-shadow-[0_0_20px_rgba(220,38,38,0.8)] glitch" data-text="Z.E.R.O PROTOCOL ACTIVE">Z.E.R.O PROTOCOL ACTIVE</h1>
            <p className="text-xl tracking-widest uppercase">USER IDENTITY {userProfile.vsiId} HAS BEEN PERMANENTLY ERASED.</p>
            <p className="text-red-900 mt-8 text-sm">NO FURTHER ACCESS PERMITTED.</p>
