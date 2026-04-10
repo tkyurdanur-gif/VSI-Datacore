@@ -159,9 +159,10 @@
       // Core State
       const [authLoading, setAuthLoading] = useState(true);
       const [systemPassword, setSystemPassword] = useState('acidlava13'); 
+      const [systemConfig, setSystemConfig] = useState({ globalSilence: false, omegaWatch: false });
       const [clearanceLevel, setClearanceLevel] = useState(1); 
       
-      // Database State (Now pulled from Firestore)
+      // Database State
       const [documents, setDocuments] = useState([]);
       const [personnel, setPersonnel] = useState([]);
       const [factions, setFactions] = useState([]);
@@ -173,7 +174,7 @@
       const [lockdownState, setLockdownState] = useState(false);
       const [sessionExpired, setSessionExpired] = useState(false);
       const [argUnlocked, setArgUnlocked] = useState(false);
-      const [failedAttempts, setFailedAttempts] = useState(0); // FIXED: Added missing state declaration
+      const [failedAttempts, setFailedAttempts] = useState(0);
       
       // Logs & AI
       const [accessLogs, setAccessLogs] = useState([{ time: new Date().toLocaleTimeString(), action: "SYSTEM BOOT", user: "GUEST" }]);
@@ -188,7 +189,7 @@
       const [searchQuery, setSearchQuery] = useState('');
       
       // Terminal
-      const [terminalHistory, setTerminalHistory] = useState(["VSI OS v4.2.0 (P.I.R Active).", "Type 'HELP' for commands."]);
+      const [terminalHistory, setTerminalHistory] = useState(["VSI OS v5.0.0 (P.I.R Active).", "Type 'HELP' for commands."]);
       const [terminalInput, setTerminalInput] = useState('');
       const terminalEndRef = useRef(null);
       
@@ -200,8 +201,7 @@
       }, [userProfile]);
 
       const increaseSuspicion = async (amount, reason) => {
-        if (!user || !userProfile) return;
-        if (userProfile.status === 'ERASED') return; // Zero protocol is final
+        if (!user || !userProfile || userProfile.status === 'ERASED') return; 
         
         const newSuspicion = Math.min(100, (userProfile.suspicion || 0) + amount);
         let newStatus = userProfile.status;
@@ -221,20 +221,34 @@
         const initAuth = async () => {
           try {
             if (firebaseConfig.apiKey === "YOUR_API_KEY") { setAuthLoading(false); return; }
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
-            else await signInAnonymously(auth);
-          } catch (error) { console.error("Auth Error:", error); setAuthLoading(false); }
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+               await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+               await signInAnonymously(auth);
+            }
+          } catch (error) { 
+            console.error("Auth Error:", error); 
+            setAuthLoading(false); 
+          }
         };
         initAuth();
-        const unsubscribe = onAuthStateChanged(auth, (currentUser) => { setUser(currentUser); setAuthLoading(false); });
+        const unsubscribe = onAuthStateChanged(auth, (currentUser) => { 
+          setUser(currentUser); 
+          setAuthLoading(false); 
+        });
         return () => unsubscribe();
       }, []);
 
       // --- FETCH FIRESTORE DATA ---
       useEffect(() => {
-        if (!user) return;
+        if (!user) {
+          if (!authLoading) {
+             // Fallback profile if auth fails (e.g. API keys invalid on GitHub)
+             setUserProfile({ vsiId: `VSI-OFFLINE`, role: 'Offline Guest', suspicion: 0, status: 'Active' });
+          }
+          return;
+        }
         
-        // 1. P.I.R Profile Fetch
         const userRef = getDocRef('vsi_users', user.uid);
         const unsubUser = onSnapshot(userRef, (docSnap) => {
           if (docSnap.exists()) {
@@ -246,7 +260,6 @@
           }
         });
 
-        // 2. Data Listeners
         const createListener = (colName, setter) => {
           return onSnapshot(getColRef(colName), (snapshot) => {
             const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -261,14 +274,20 @@
         const unsubInci = createListener('vsi_incidents', setIncidents);
         const unsubExp = createListener('vsi_experiments', setExperiments);
 
-        // 3. Config
         const unsubConfig = onSnapshot(getConfigRef(), (docSnap) => {
-          if (docSnap.exists()) setSystemPassword(docSnap.data().classifiedPassword);
-          else setDoc(getConfigRef(), { classifiedPassword: 'acidlava13' });
+          if (docSnap.exists()) {
+             setSystemPassword(docSnap.data().classifiedPassword || 'acidlava13');
+             setSystemConfig({
+                globalSilence: docSnap.data().globalSilence || false,
+                omegaWatch: docSnap.data().omegaWatch || false
+             });
+          } else {
+             setDoc(getConfigRef(), { classifiedPassword: 'acidlava13', globalSilence: false, omegaWatch: false });
+          }
         });
 
         return () => { unsubUser(); unsubDocs(); unsubPers(); unsubFact(); unsubInci(); unsubExp(); unsubConfig(); };
-      }, [user]);
+      }, [user, authLoading]);
 
       // --- SECURITY & AI LOOP ---
       useEffect(() => {
@@ -277,29 +296,28 @@
         window.addEventListener('keydown', handleActivity);
 
         const systemInterval = setInterval(() => {
-          // Session Expiry
           if (clearanceLevel === 5 && Date.now() - lastActivityTime.current > 120000) {
             setClearanceLevel(1);
             setSessionExpired(true);
             addLog("SESSION EXPIRED DUE TO INACTIVITY");
           }
 
-          // A.B.A Dynamic AI Responses
           if (userProfile) {
             if (userProfile.status === 'ERASED') setAiMessage("Z.E.R.O Protocol. Entity erased.");
-            else if (userProfile.status === 'Silenced') setAiMessage("S.I.L.E.N.C.E Protocol active. Write access denied.");
-            else if (userProfile.status === 'Flagged') setAiMessage("OMEGA WATCH active. You are being observed.");
+            else if (systemConfig.globalSilence) setAiMessage("GLOBAL S.I.L.E.N.C.E ACTIVE. Network read-only.");
+            else if (systemConfig.omegaWatch) setAiMessage("O.M.E.G.A WATCH ACTIVE. High alert state.");
+            else if (userProfile.status === 'Silenced') setAiMessage("S.I.L.E.N.C.E Protocol active on your ID.");
+            else if (userProfile.status === 'Flagged') setAiMessage("You are being observed.");
             else setAiMessage("Monitoring baseline behavior.");
           }
 
-          // Integrity Drops
           if (!lockdownState && userProfile?.status !== 'ERASED' && Math.random() > 0.85) {
             setIntegrity(prev => Math.max(0, prev - Math.floor(Math.random() * 5)));
           }
         }, 8000);
 
         return () => { clearInterval(systemInterval); window.removeEventListener('mousemove', handleActivity); window.removeEventListener('keydown', handleActivity); };
-      }, [clearanceLevel, lockdownState, addLog, userProfile]);
+      }, [clearanceLevel, lockdownState, addLog, userProfile, systemConfig]);
 
       useEffect(() => { if (terminalEndRef.current) terminalEndRef.current.scrollIntoView({ behavior: 'smooth' }); }, [terminalHistory]);
 
@@ -322,10 +340,13 @@
         setActiveTab('terminal');
       }, [addLog]);
 
-      // Check S.I.L.E.N.C.E protocol before writing to DB
       const checkWriteAccess = () => {
+        if (systemConfig.globalSilence) {
+          triggerUnauthorized("GLOBAL S.I.L.E.N.C.E PROTOCOL ACTIVE. WRITE BLOCKED.", 0);
+          return false;
+        }
         if (userProfile?.status === 'Silenced' || userProfile?.status === 'ERASED') {
-          triggerUnauthorized("S.I.L.E.N.C.E PROTOCOL ACTIVE. WRITE BLOCKED.", 0);
+          triggerUnauthorized("S.I.L.E.N.C.E PROTOCOL ACTIVE ON USER. WRITE BLOCKED.", 0);
           return false;
         }
         return true;
@@ -362,7 +383,7 @@
 
         if (lockdownState) {
           if (cmd === 'OVERRIDE') {
-            if (clearanceLevel >= 5 || systemPassword === 'acidlava13') { // Fallback if stuck
+            if (clearanceLevel >= 5 || systemPassword === 'acidlava13' || cmd === 'OVERRIDE') { 
                setLockdownState(false); setIntegrity(100); response = "LOCKDOWN LIFTED."; addLog("LOCKDOWN OVERRIDDEN");
             } else response = "REQUIRE ADMIN AUTHORIZATION PRIOR TO OVERRIDE.";
           } else response = "SYSTEM LOCKED. Type 'OVERRIDE'.";
@@ -382,16 +403,7 @@
         setTerminalHistory(prev => [...prev, `> ${cmd}`, response]); setTerminalInput('');
       };
 
-      // --- DATABASE WRITERS (With S.I.L.E.N.C.E check) ---
-      const handleGenericAdd = async (e, collectionName, formStateKey, resetObj) => {
-        e.preventDefault();
-        if (!checkWriteAccess() || clearanceLevel < 5) return;
-        try {
-          await addDoc(getColRef(collectionName), { ...e.target.elements, createdAt: Date.now() }); 
-          // Note: Simplification for inline forms below
-        } catch (error) { console.error("DB Error:", error); }
-      };
-
+      // --- DATABASE WRITERS ---
       const handleAddDocument = async (e) => {
         e.preventDefault();
         if (!checkWriteAccess() || clearanceLevel < 5) return;
@@ -435,7 +447,6 @@
         </div>
       );
 
-      // Z.E.R.O Protocol Render
       if (userProfile.status === 'ERASED') return (
         <div className="h-screen w-screen bg-black flex flex-col items-center justify-center text-red-600 font-mono select-none">
            <Fingerprint size={100} className="mb-8 opacity-50" />
@@ -445,23 +456,21 @@
         </div>
       );
 
-      // MIRAGE Protocol Fake Data Injection
       let displayFactions = [...factions];
-      if (userProfile.status === 'Flagged' || userProfile.status === 'Silenced') {
+      if (userProfile.status === 'Flagged' || userProfile.status === 'Silenced' || systemConfig.omegaWatch) {
         displayFactions.push({ id: "MIR-00", name: "████████████", relation: "Unknown", class: "Keter", threat: "Black", description: "DATA CORRUPTED. DO NOT INVESTIGATE." });
       }
 
       const isGlitching = (integrity < 30 || lockdownState) ? 'glitch' : '';
-      const isOmega = userProfile.status === 'Flagged' ? 'omega-mode' : '';
+      const isOmega = (userProfile.status === 'Flagged' || systemConfig.omegaWatch) ? 'omega-mode' : '';
 
       return (
         <div className={`h-screen w-screen flex flex-col overflow-hidden text-zinc-300 bg-black font-mono select-none ${lockdownState ? 'lockdown-mode' : isOmega}`}>
           
           <div className="fixed inset-0 z-0 bg-cover bg-center bg-no-repeat" style={{ backgroundImage: 'url("VSI_Design_Gallery_1.png")' }} />
           <div className="fixed inset-0 z-0 bg-black/60" />
-          <div className={`fixed inset-0 z-0 pointer-events-none animate-scan ${lockdownState ? 'bg-red-900/30' : userProfile.status==='Flagged'?'bg-orange-900/20':'bg-black/20'}`} />
+          <div className={`fixed inset-0 z-0 pointer-events-none animate-scan ${lockdownState ? 'bg-red-900/30' : (userProfile.status==='Flagged' || systemConfig.omegaWatch)?'bg-orange-900/20':'bg-black/20'}`} />
 
-          {/* OVERLAYS */}
           {unauthorizedPopup && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-red-900/50 backdrop-blur-sm">
               <div className="bg-black border-2 border-red-600 p-8 text-center max-w-md w-full shadow-[0_0_50px_rgba(220,38,38,0.8)]">
@@ -490,10 +499,8 @@
             </div>
           )}
 
-          {/* MAIN UI */}
           <div className={`relative z-10 flex flex-col h-full p-4 md:p-6 ${isGlitching}`} data-text="NETWORK INSTABILITY">
             
-            {/* HEADER */}
             <header className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-zinc-800 pb-4 mb-4 gap-4">
               <div>
                 <h1 className={`text-3xl md:text-4xl font-black flex items-center gap-3 tracking-tighter uppercase ${lockdownState ? 'text-red-500 drop-shadow-[0_0_10px_rgba(239,68,68,0.8)]' : 'text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.5)]'}`}>
@@ -512,7 +519,6 @@
                 </div>
               </div>
               
-              {/* TOP RIGHT: P.I.R & AI */}
               <div className="flex flex-col items-end gap-2 w-full md:w-auto">
                 <div className="flex items-center gap-3 text-xs border border-zinc-800 bg-black/60 px-3 py-1 text-zinc-400">
                   <Fingerprint size={14} className="text-cyan-500" />
@@ -528,10 +534,8 @@
               </div>
             </header>
 
-            {/* CONTENT AREA */}
             <div className="flex flex-col md:flex-row flex-1 gap-6 min-h-0">
               
-              {/* SIDEBAR NAV */}
               <nav className="flex md:flex-col gap-2 overflow-x-auto md:w-48 shrink-0 pb-2 md:pb-0 scrollbar-red">
                 {[
                   { id: 'dashboard', label: 'DASHBOARD', icon: Activity },
@@ -541,6 +545,7 @@
                   { id: 'incidents', label: 'INCIDENTS', icon: AlertTriangle },
                   { id: 'experiments', label: 'EXPERIMENTS', icon: Flask },
                   { id: 'logs', label: 'P.I.R LOGS', icon: Database },
+                  { id: 'security', label: 'SECURITY', icon: ShieldAlert },
                   { id: 'terminal', label: 'TERMINAL', icon: TerminalSquare },
                 ].map(tab => (
                   <button 
@@ -555,7 +560,6 @@
                 ))}
               </nav>
 
-              {/* MAIN PANEL */}
               <main className={`flex-1 border rounded-lg p-6 overflow-y-auto relative backdrop-blur-md shadow-2xl flex flex-col ${lockdownState ? 'bg-red-950/10 border-red-900/50 scrollbar-red' : 'bg-black/60 border-zinc-800'}`}>
                 
                 {/* TAB: DASHBOARD */}
@@ -595,6 +599,85 @@
                         <p className="text-[10px] text-zinc-500 mt-2">Classified Assets: Protected</p>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* TAB: SECURITY CONFIGURATION (NEW) */}
+                {activeTab === 'security' && !lockdownState && (
+                  <div className="animate-in fade-in duration-500 h-full flex flex-col space-y-6">
+                    <h2 className="text-xl border-b border-zinc-800 pb-2 text-cyan-500">SECURITY PROTOCOLS & CONFIGURATION</h2>
+                    
+                    {clearanceLevel < 5 ? (
+                      <div className="text-red-500 p-6 border border-red-900 bg-red-950/20 text-center font-bold tracking-widest mt-4">
+                        <ShieldAlert size={48} className="mx-auto mb-4" />
+                        LEVEL 5 CLEARANCE REQUIRED TO ACCESS SECURITY CONFIGURATION.
+                      </div>
+                    ) : (
+                      <div className="space-y-6 overflow-y-auto pr-2 pb-4">
+                        {/* MASTER PASSWORD */}
+                        <div className="border border-zinc-800 p-4 bg-black/40">
+                          <h3 className="text-yellow-500 font-bold mb-2 flex items-center gap-2"><KeyRound size={16}/> MASTER CLEARANCE CODE</h3>
+                          <form onSubmit={(e) => {
+                              e.preventDefault();
+                              updateDoc(getConfigRef(), { classifiedPassword: e.target.pwd.value });
+                              addLog("MASTER PASSWORD UPDATED");
+                              e.target.reset();
+                          }} className="flex gap-2">
+                            <input name="pwd" placeholder="Enter new Master Password..." required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300 outline-none focus:border-yellow-500" />
+                            <button type="submit" className="bg-yellow-900/30 text-yellow-500 border border-yellow-700 px-4 hover:bg-yellow-800/50 font-bold">UPDATE</button>
+                          </form>
+                        </div>
+                        
+                        {/* PROTOCOL TOGGLES */}
+                        <div className="border border-zinc-800 p-4 bg-black/40 space-y-4">
+                          <h3 className="text-red-500 font-bold mb-2 flex items-center gap-2"><ShieldAlert size={16}/> GLOBAL PROTOCOLS</h3>
+                          
+                          <div className="flex justify-between items-center border-b border-zinc-900 pb-4">
+                            <div>
+                              <div className="font-bold text-zinc-300">S.I.L.E.N.C.E PROTOCOL</div>
+                              <div className="text-xs text-zinc-500">Enforces global read-only mode. All write/delete requests denied.</div>
+                            </div>
+                            <button onClick={() => {
+                               const next = !systemConfig.globalSilence;
+                               updateDoc(getConfigRef(), { globalSilence: next });
+                               addLog(`GLOBAL SILENCE ${next ? 'ACTIVATED' : 'DEACTIVATED'}`);
+                            }} className={`px-6 py-2 font-bold transition-colors ${systemConfig.globalSilence ? 'bg-red-900 text-red-300 border border-red-500' : 'bg-zinc-800 text-zinc-500 border border-zinc-700'}`}>
+                               {systemConfig.globalSilence ? 'ACTIVE' : 'INACTIVE'}
+                            </button>
+                          </div>
+
+                          <div className="flex justify-between items-center pt-2">
+                            <div>
+                              <div className="font-bold text-zinc-300">O.M.E.G.A WATCH</div>
+                              <div className="text-xs text-zinc-500">Global high-alert state. Injects Mirage data for all users regardless of ID status.</div>
+                            </div>
+                            <button onClick={() => {
+                               const next = !systemConfig.omegaWatch;
+                               updateDoc(getConfigRef(), { omegaWatch: next });
+                               addLog(`OMEGA WATCH ${next ? 'ACTIVATED' : 'DEACTIVATED'}`);
+                            }} className={`px-6 py-2 font-bold transition-colors ${systemConfig.omegaWatch ? 'bg-orange-900 text-orange-300 border border-orange-500' : 'bg-zinc-800 text-zinc-500 border border-zinc-700'}`}>
+                               {systemConfig.omegaWatch ? 'ACTIVE' : 'INACTIVE'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* SYSTEM ACTIONS */}
+                        <div className="border border-zinc-800 p-4 bg-black/40">
+                          <h3 className="text-cyan-500 font-bold mb-4 flex items-center gap-2"><Activity size={16}/> MANUAL OVERRIDES</h3>
+                          <div className="flex flex-wrap gap-4">
+                            <button onClick={() => triggerLockdown("MANUAL ADMIN OVERRIDE")} className="bg-red-900/30 text-red-500 border border-red-700 px-4 py-2 hover:bg-red-900/50 font-bold text-xs">TRIGGER LOCKDOWN</button>
+                            <button onClick={() => { setIntegrity(100); addLog("MANUAL INTEGRITY REPAIR INITIATED"); }} className="bg-cyan-900/30 text-cyan-500 border border-cyan-700 px-4 py-2 hover:bg-cyan-900/50 font-bold text-xs">REPAIR SYSTEM INTEGRITY</button>
+                            <button onClick={() => {
+                               if (user) {
+                                 updateDoc(getDocRef('vsi_users', user.uid), { suspicion: 0, status: 'Active' });
+                                 addLog("ADMIN CLEARED PERSONAL A.B.A SUSPICION");
+                               }
+                            }} className="bg-zinc-800 text-zinc-300 border border-zinc-600 px-4 py-2 hover:bg-zinc-700 font-bold text-xs">RESET OWN SUSPICION</button>
+                          </div>
+                        </div>
+
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -682,7 +765,7 @@
                       ))}
                     </div>
                     {clearanceLevel >= 5 && (
-                      <form onSubmit={(e) => { e.preventDefault(); const t = e.target; addDoc(getColRef('vsi_personnel'), { codename: t.c.value, rank: t.r.value, status: t.s.value, level: parseInt(t.l.value), notes: t.n.value }); t.reset(); }} className="mt-4 p-4 border border-zinc-800 bg-black/50 shrink-0">
+                      <form onSubmit={(e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; addDoc(getColRef('vsi_personnel'), { codename: t.c.value, rank: t.r.value, status: t.s.value, level: parseInt(t.l.value), notes: t.n.value }); t.reset(); }} className="mt-4 p-4 border border-zinc-800 bg-black/50 shrink-0">
                          <div className="flex gap-2 text-sm"><input name="c" placeholder="Codename" required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="r" placeholder="Rank" className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><select name="s" className="bg-zinc-900 border border-zinc-800 p-2 text-zinc-300"><option>Active</option><option>MIA</option><option>Terminated</option></select><input type="number" name="l" placeholder="Lvl" defaultValue="3" className="w-16 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="n" placeholder="Notes" className="flex-2 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><button type="submit" className="bg-yellow-900/30 text-yellow-500 border border-yellow-700 px-3"><Plus size={16}/></button></div>
                       </form>
                     )}
@@ -704,7 +787,7 @@
                       ))}
                     </div>
                     {clearanceLevel >= 5 && (
-                      <form onSubmit={(e) => { e.preventDefault(); const t = e.target; addDoc(getColRef('vsi_factions'), { id: t.i.value, name: t.n.value, relation: t.r.value, class: t.c.value, threat: "Unknown", description: t.d.value }); t.reset(); }} className="mt-4 p-4 border border-zinc-800 bg-black/50 shrink-0">
+                      <form onSubmit={(e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; addDoc(getColRef('vsi_factions'), { id: t.i.value, name: t.n.value, relation: t.r.value, class: t.c.value, threat: "Unknown", description: t.d.value }); t.reset(); }} className="mt-4 p-4 border border-zinc-800 bg-black/50 shrink-0">
                          <div className="flex gap-2 text-sm"><input name="i" placeholder="ID (VSI-001)" required className="w-24 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="n" placeholder="Faction Name" required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><select name="r" className="bg-zinc-900 border border-zinc-800 p-2 text-zinc-300"><option>Neutral</option><option>Hostile</option><option>Allied</option></select><select name="c" className="bg-zinc-900 border border-zinc-800 p-2 text-zinc-300"><option>Safe</option><option>Euclid</option><option>Keter</option></select><input name="d" placeholder="Description" className="flex-2 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><button type="submit" className="bg-yellow-900/30 text-yellow-500 border border-yellow-700 px-3"><Plus size={16}/></button></div>
                       </form>
                     )}
@@ -737,7 +820,7 @@
                       </div>
                     </div>
                     {clearanceLevel >= 5 && (
-                      <form onSubmit={(e) => { e.preventDefault(); const t = e.target; addDoc(getColRef('vsi_incidents'), { date: t.d.value, id: t.i.value, log: t.l.value, clearance: parseInt(t.c.value), class: t.cl.value }); t.reset(); }} className="mt-8 p-4 border border-zinc-800 bg-black/50 shrink-0">
+                      <form onSubmit={(e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; addDoc(getColRef('vsi_incidents'), { date: t.d.value, id: t.i.value, log: t.l.value, clearance: parseInt(t.c.value), class: t.cl.value }); t.reset(); }} className="mt-8 p-4 border border-zinc-800 bg-black/50 shrink-0">
                          <div className="flex gap-2 text-sm"><input name="d" placeholder="Date (YYYY-MM-DD)" required className="w-32 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="i" placeholder="ID (INC-001)" required className="w-24 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><select name="cl" className="bg-zinc-900 border border-zinc-800 p-2 text-zinc-300"><option>Safe</option><option>Euclid</option><option>Keter</option></select><input type="number" name="c" placeholder="Lvl" defaultValue="3" className="w-16 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="l" placeholder="Incident Log..." className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><button type="submit" className="bg-yellow-900/30 text-yellow-500 border border-yellow-700 px-3"><Plus size={16}/></button></div>
                       </form>
                     )}
@@ -769,7 +852,7 @@
                       ))}
                     </div>
                     {clearanceLevel >= 5 && (
-                      <form onSubmit={(e) => { e.preventDefault(); const t = e.target; addDoc(getColRef('vsi_experiments'), { id: t.i.value, protocol: t.p.value, procedure: t.pr.value, result: t.r.value, notes: t.n.value, clearance: parseInt(t.c.value) }); t.reset(); }} className="mt-8 p-4 border border-zinc-800 bg-black/50 shrink-0 relative z-20">
+                      <form onSubmit={(e) => { e.preventDefault(); if(!checkWriteAccess()) return; const t = e.target; addDoc(getColRef('vsi_experiments'), { id: t.i.value, protocol: t.p.value, procedure: t.pr.value, result: t.r.value, notes: t.n.value, clearance: parseInt(t.c.value) }); t.reset(); }} className="mt-8 p-4 border border-zinc-800 bg-black/50 shrink-0 relative z-20">
                          <div className="flex gap-2 text-sm flex-wrap"><input name="i" placeholder="ID (EXP-01)" required className="w-24 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="p" placeholder="Protocol Name" required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input type="number" name="c" placeholder="Lvl" defaultValue="4" className="w-16 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /></div>
                          <div className="flex gap-2 text-sm mt-2"><input name="pr" placeholder="Procedure..." required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="r" placeholder="Result..." required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><input name="n" placeholder="Notes..." required className="flex-1 bg-zinc-900 border border-zinc-800 p-2 text-zinc-300" /><button type="submit" className="bg-yellow-900/30 text-yellow-500 border border-yellow-700 px-3"><Plus size={16}/></button></div>
                       </form>
