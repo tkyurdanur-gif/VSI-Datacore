@@ -1,0 +1,402 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, doc, setDoc, onSnapshot, addDoc, deleteDoc } from 'firebase/firestore';
+import { FileText, Table, ListTodo, Lock, Unlock, Plus, Trash2, ExternalLink, Shield, ShieldAlert, KeyRound, TerminalSquare } from 'lucide-react';
+
+// --- FIREBASE INITIALIZATION ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'vsi-default-id';
+
+export default function App() {
+  // Authentication & Core State
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  
+  // Data State
+  const [documents, setDocuments] = useState([]);
+  const [systemPassword, setSystemPassword] = useState('acidlava13'); // Fallback default
+  
+  // UI State
+  const [activeTab, setActiveTab] = useState('public');
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [unlockInput, setUnlockInput] = useState('');
+  const [unlockError, setUnlockError] = useState('');
+  
+  // Form State
+  const [newDoc, setNewDoc] = useState({ title: '', url: '', type: 'Doc', isClassified: false });
+
+  // 1. Initialize Authentication (Rule 3)
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Auth Error:", error);
+      }
+    };
+    initAuth();
+
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Fetch Data (Rules 1 & 2)
+  useEffect(() => {
+    if (!user) return;
+
+    // Fetch Documents Collection
+    const docsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vsi_documents');
+    const unsubDocs = onSnapshot(docsRef, (snapshot) => {
+      const docsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Sort in memory (Rule 2: No complex queries)
+      docsData.sort((a, b) => b.createdAt - a.createdAt);
+      setDocuments(docsData);
+    }, (error) => console.error("Docs listener error:", error));
+
+    // Fetch System Configuration (Password)
+    const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'vsi_config', 'master_settings');
+    const unsubConfig = onSnapshot(configRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setSystemPassword(docSnap.data().classifiedPassword);
+      } else {
+        // Initialize config if it doesn't exist
+        setDoc(configRef, { classifiedPassword: 'acidlava13' });
+      }
+    }, (error) => console.error("Config listener error:", error));
+
+    return () => {
+      unsubDocs();
+      unsubConfig();
+    };
+  }, [user]);
+
+  // --- HANDLERS ---
+
+  const handleAddDocument = async (e) => {
+    e.preventDefault();
+    if (!user || !newDoc.title || !newDoc.url) return;
+
+    // Ensure URL has http/https
+    let finalUrl = newDoc.url;
+    if (!/^https?:\/\//i.test(finalUrl)) {
+      finalUrl = 'https://' + finalUrl;
+    }
+
+    try {
+      const docsRef = collection(db, 'artifacts', appId, 'public', 'data', 'vsi_documents');
+      await addDoc(docsRef, {
+        title: newDoc.title,
+        url: finalUrl,
+        type: newDoc.type,
+        isClassified: newDoc.isClassified,
+        createdAt: Date.now(),
+        addedBy: user.uid
+      });
+      setNewDoc({ title: '', url: '', type: 'Doc', isClassified: false }); // Reset
+    } catch (error) {
+      console.error("Error adding document:", error);
+    }
+  };
+
+  const handleDeleteDocument = async (docId) => {
+    if (!user) return;
+    try {
+      const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'vsi_documents', docId);
+      await deleteDoc(docRef);
+    } catch (error) {
+      console.error("Error deleting document:", error);
+    }
+  };
+
+  const handleUnlock = (e) => {
+    e.preventDefault();
+    if (unlockInput.trim() === systemPassword.trim()) {
+      setIsUnlocked(true);
+      setUnlockError('');
+      setUnlockInput('');
+    } else {
+      setUnlockError('ACCESS DENIED: Invalid Clearance Code.');
+      setIsUnlocked(false);
+    }
+  };
+
+  // --- HELPER RENDERERS ---
+
+  const getIcon = (type, isClassified) => {
+    const colorClass = isClassified ? "text-red-500" : "text-cyan-400";
+    switch (type) {
+      case 'Sheet': return <Table className={colorClass} size={20} />;
+      case 'Form': return <ListTodo className={colorClass} size={20} />;
+      default: return <FileText className={colorClass} size={20} />;
+    }
+  };
+
+  const renderDocumentCard = (doc) => (
+    <div key={doc.id} className={`flex items-center justify-between p-4 mb-3 border rounded-md bg-zinc-900/50 ${doc.isClassified ? 'border-red-900/50 hover:border-red-500/50' : 'border-cyan-900/50 hover:border-cyan-500/50'} transition-colors`}>
+      <div className="flex items-center space-x-4">
+        <div className={`p-2 rounded bg-zinc-950 border ${doc.isClassified ? 'border-red-900' : 'border-cyan-900'}`}>
+          {getIcon(doc.type, doc.isClassified)}
+        </div>
+        <div>
+          <a href={doc.url} target="_blank" rel="noopener noreferrer" className={`font-bold text-lg hover:underline flex items-center gap-2 ${doc.isClassified ? 'text-red-400' : 'text-cyan-100'}`}>
+            {doc.title}
+            <ExternalLink size={14} className="opacity-50" />
+          </a>
+          <div className="flex items-center gap-3 text-xs text-zinc-500 mt-1">
+            <span className="uppercase tracking-wider">{doc.type}</span>
+            <span>•</span>
+            <span>Added: {new Date(doc.createdAt).toLocaleDateString()}</span>
+          </div>
+        </div>
+      </div>
+      <button 
+        onClick={() => handleDeleteDocument(doc.id)}
+        className="p-2 text-zinc-600 hover:text-red-500 transition-colors"
+        title="Delete Document"
+      >
+        <Trash2 size={18} />
+      </button>
+    </div>
+  );
+
+  // Filter lists in memory
+  const publicDocs = documents.filter(d => !d.isClassified);
+  const classifiedDocs = documents.filter(d => d.isClassified);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center text-cyan-400 font-mono drop-shadow-[0_0_10px_rgba(34,211,238,0.8)]">
+        <TerminalSquare className="animate-pulse mr-3" />
+        INITIALIZING VSI DATACORE...
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen font-mono relative overflow-x-hidden text-zinc-300 bg-black">
+      {/* Exact Image Background */}
+      <div 
+        className="fixed inset-0 z-0 bg-cover bg-center bg-no-repeat"
+        style={{ backgroundImage: 'url("VSI_Design_Gallery_1.png")' }}
+      />
+      {/* Dark Overlay for Readability (adjust the /70 to change transparency) */}
+      <div className="fixed inset-0 z-0 bg-black/70" />
+      
+      <div className="relative z-10 p-4 md:p-8 max-w-5xl mx-auto">
+        
+        {/* HEADER */}
+        <header className="mb-8 border-b border-zinc-800/80 pb-6">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+            <div>
+              <h1 className="text-4xl md:text-5xl font-black text-cyan-400 drop-shadow-[0_0_15px_rgba(34,211,238,0.6)] flex items-center gap-3 tracking-tighter">
+                <Shield className="text-cyan-400" size={40} />
+                VALTRIX SWIFT INITIATIVE
+              </h1>
+              <p className="text-transparent mt-3 text-lg md:text-xl tracking-[0.15em] uppercase font-black drop-shadow-[0_0_8px_rgba(34,211,238,0.3)]" style={{ WebkitTextStroke: '1px #22d3ee' }}>
+                " We move before you react. "
+              </p>
+              <p className="text-zinc-500 mt-4 text-xs tracking-widest uppercase">Central Datacore // Authorized Personnel Only</p>
+            </div>
+            <div className="text-xs text-zinc-600 text-left md:text-right">
+              SYSTEM STATUS: <span className="text-cyan-400 animate-pulse drop-shadow-[0_0_5px_rgba(34,211,238,0.8)]">ONLINE</span><br/>
+              SECURE CONNECTION ACTIVE
+            </div>
+          </div>
+        </header>
+
+        {/* NAVIGATION */}
+        <nav className="flex space-x-2 mb-8 bg-zinc-900 p-1 rounded-lg border border-zinc-800 w-fit">
+          <button 
+            onClick={() => setActiveTab('public')}
+            className={`px-4 py-2 rounded-md flex items-center gap-2 transition-all ${activeTab === 'public' ? 'bg-cyan-950/50 text-cyan-400 border border-cyan-800/50 shadow-[0_0_10px_rgba(34,211,238,0.1)]' : 'text-zinc-500 hover:text-zinc-300'}`}
+          >
+            <Lock size={16} className="opacity-50" />
+            Public Archive
+          </button>
+          <button 
+            onClick={() => setActiveTab('classified')}
+            className={`px-4 py-2 rounded-md flex items-center gap-2 transition-all ${activeTab === 'classified' ? 'bg-red-950/30 text-red-400 border border-red-900/50 shadow-[0_0_10px_rgba(248,113,113,0.1)]' : 'text-zinc-500 hover:text-zinc-300'}`}
+          >
+            <ShieldAlert size={16} className={activeTab === 'classified' ? '' : 'opacity-50'} />
+            Classified Core
+          </button>
+          <button 
+            onClick={() => setActiveTab('add')}
+            className={`px-4 py-2 rounded-md flex items-center gap-2 transition-all ${activeTab === 'add' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+          >
+            <Plus size={16} />
+            Add Entry
+          </button>
+        </nav>
+
+        {/* MAIN CONTENT AREA */}
+        <main className="min-h-[500px]">
+          
+          {/* TAB: PUBLIC */}
+          {activeTab === 'public' && (
+            <div className="space-y-4 animate-in fade-in duration-300">
+              <h2 className="text-xl font-semibold text-cyan-500 mb-6 flex items-center gap-2 border-b border-zinc-800 pb-2">
+                STANDARD CLEARANCE DOCUMENTS
+              </h2>
+              {publicDocs.length === 0 ? (
+                <p className="text-zinc-600 italic">No public documents found in the database.</p>
+              ) : (
+                <div className="grid gap-3">
+                  {publicDocs.map(renderDocumentCard)}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: CLASSIFIED */}
+          {activeTab === 'classified' && (
+            <div className="space-y-4 animate-in fade-in duration-300">
+              <h2 className="text-xl font-semibold text-red-500 mb-6 flex items-center gap-2 border-b border-red-900/30 pb-2">
+                RESTRICTED CLEARANCE DOCUMENTS
+              </h2>
+
+              {!isUnlocked ? (
+                <div className="max-w-md mx-auto mt-12 bg-black border border-red-900/50 p-8 rounded-lg shadow-[0_0_30px_rgba(220,38,38,0.1)] text-center relative overflow-hidden">
+                  {/* Decorative Scanline */}
+                  <div className="absolute inset-0 bg-gradient-to-b from-transparent via-red-500/5 to-transparent h-full w-full pointer-events-none -translate-y-full animate-[scan_3s_linear_infinite]" />
+                  
+                  <ShieldAlert className="mx-auto text-red-600 mb-4" size={48} />
+                  <h3 className="text-red-500 font-bold text-lg mb-2 tracking-widest">AUTHORIZATION REQUIRED</h3>
+                  <p className="text-zinc-500 text-sm mb-6">Enter clearance code to access Level 5 VSI files.</p>
+                  
+                  <form onSubmit={handleUnlock} className="space-y-4 relative z-10">
+                    <input 
+                      type="password" 
+                      value={unlockInput}
+                      onChange={(e) => setUnlockInput(e.target.value)}
+                      placeholder="Enter passkey..."
+                      className="w-full bg-zinc-900 border border-zinc-800 focus:border-red-500 focus:ring-1 focus:ring-red-500 text-white p-3 rounded-md text-center tracking-[0.2em] outline-none transition-all"
+                    />
+                    <button 
+                      type="submit"
+                      className="w-full bg-red-900/40 hover:bg-red-800/60 text-red-400 border border-red-900/50 p-3 rounded-md font-bold tracking-widest transition-colors flex items-center justify-center gap-2"
+                    >
+                      <KeyRound size={18} />
+                      AUTHENTICATE
+                    </button>
+                  </form>
+                  {unlockError && <p className="text-red-500 text-sm mt-4 animate-pulse">{unlockError}</p>}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-red-950/20 border border-red-900/30 p-3 rounded-md flex justify-between items-center text-red-400 text-sm mb-6">
+                    <span className="flex items-center gap-2"><Unlock size={16} /> CLEARANCE ACCEPTED. LOGGED IN AS ADMIN.</span>
+                    <button onClick={() => setIsUnlocked(false)} className="underline hover:text-red-300">Lock Terminal</button>
+                  </div>
+                  
+                  {classifiedDocs.length === 0 ? (
+                    <p className="text-zinc-600 italic">No classified documents found in the database.</p>
+                  ) : (
+                    <div className="grid gap-3">
+                      {classifiedDocs.map(renderDocumentCard)}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: ADD DOCUMENT */}
+          {activeTab === 'add' && (
+            <div className="max-w-2xl mx-auto animate-in fade-in duration-300">
+               <h2 className="text-xl font-semibold text-zinc-100 mb-6 flex items-center gap-2 border-b border-zinc-800 pb-2">
+                UPLOAD NEW RECORD
+              </h2>
+
+              <form onSubmit={handleAddDocument} className="bg-zinc-900 border border-zinc-800 p-6 rounded-lg space-y-5">
+                <div>
+                  <label className="block text-zinc-400 text-sm mb-1 uppercase tracking-wider">Document Title</label>
+                  <input 
+                    required
+                    type="text" 
+                    value={newDoc.title}
+                    onChange={(e) => setNewDoc({...newDoc, title: e.target.value})}
+                    placeholder="e.g., VSI Formations Guide"
+                    className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 p-3 rounded focus:border-cyan-500 outline-none transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-zinc-400 text-sm mb-1 uppercase tracking-wider">URL / Link</label>
+                  <input 
+                    required
+                    type="text" 
+                    value={newDoc.url}
+                    onChange={(e) => setNewDoc({...newDoc, url: e.target.value})}
+                    placeholder="https://docs.google.com/..."
+                    className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 p-3 rounded focus:border-cyan-500 outline-none transition-colors font-sans"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-zinc-400 text-sm mb-1 uppercase tracking-wider">Format Type</label>
+                    <select 
+                      value={newDoc.type}
+                      onChange={(e) => setNewDoc({...newDoc, type: e.target.value})}
+                      className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 p-3 rounded focus:border-cyan-500 outline-none transition-colors"
+                    >
+                      <option value="Doc">Google Doc / Text</option>
+                      <option value="Sheet">Google Sheet / Data</option>
+                      <option value="Form">Google Form</option>
+                      <option value="Other">Other Link</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-zinc-400 text-sm mb-1 uppercase tracking-wider">Security Level</label>
+                    <div className="h-[50px] flex items-center px-4 bg-zinc-950 border border-zinc-800 rounded">
+                      <label className="flex items-center gap-3 cursor-pointer select-none">
+                        <input 
+                          type="checkbox" 
+                          checked={newDoc.isClassified}
+                          onChange={(e) => setNewDoc({...newDoc, isClassified: e.target.checked})}
+                          className="w-5 h-5 accent-red-600 bg-zinc-900 border-zinc-700 rounded"
+                        />
+                        <span className={newDoc.isClassified ? 'text-red-400 font-bold' : 'text-zinc-400'}>
+                          {newDoc.isClassified ? 'CLASSIFIED' : 'PUBLIC'}
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <button 
+                  type="submit"
+                  className="w-full mt-4 bg-cyan-900/30 hover:bg-cyan-800/50 text-cyan-400 border border-cyan-800/50 p-3 rounded font-bold tracking-widest transition-colors flex justify-center items-center gap-2"
+                >
+                  <Plus size={18} /> INJECT RECORD TO DATABASE
+                </button>
+              </form>
+            </div>
+          )}
+
+        </main>
+      </div>
+
+      {/* Global styles for animations */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes scan {
+          0% { transform: translateY(-100%); }
+          100% { transform: translateY(100%); }
+        }
+      `}} />
+    </div>
+  );
+}
